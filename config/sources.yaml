@@ -1,0 +1,175 @@
+# Contrato de dados da fonte oficial (Base dos Dados / INEP).
+# Medido em 03/11/2026 com `bq show` e consultas de perfil (ver docs/fase1/medicao-fonte.md).
+# Qualquer divergência entre este arquivo e a fonte real bloqueia o pipeline (gate de contrato).
+
+source:
+  project: basedosdados
+  dataset: br_inep_avaliacao_alfabetizacao
+
+# Ponto de corte Saeb do indicador Criança Alfabetizada.
+cutoff_saeb: 743.0
+
+# Janela de metas pactuadas: primeiro e último ano com coluna meta_alfabetizacao_<ano>.
+# Anos anteriores ao primeiro são "linha de base"; o último é a meta final (2030).
+meta_window: [2024, 2030]
+
+# Anos plausíveis para validar eventos de streaming.
+plausible_years: [2015, 2100]
+
+# A coluna `rede` das tabelas de meta vem como texto; o dicionário oficial não a cobre.
+# Mapeamos para os códigos oficiais (5 = Pública Est+Mun, 3 = Municipal).
+# Texto desconhecido vira NULL e bloqueia o pipeline (regra silver.meta.rede_mapeada).
+meta_rede_map:
+  "Pública": "5"
+  "Municipal": "3"
+
+# Tabelas vigiadas pelo detector de mudanças (streaming).
+watch_tables:
+  - meta_alfabetizacao_brasil
+  - meta_alfabetizacao_uf
+  - meta_alfabetizacao_municipio
+
+# Idade máxima (dias) da última modificação da fonte antes de alertar (regra informativa).
+freshness_max_days: 365
+
+# Limiares da detecção de anomalias e do selo de confiança do Gold municipal.
+anomaly:
+  min_alunos_avaliados: 30
+  max_divergencia_pp: 1.0
+  queda_brusca_pp: 15.0
+
+# Código IBGE (2 primeiros dígitos do município) -> sigla da UF.
+uf_ibge:
+  "11": RO
+  "12": AC
+  "13": AM
+  "14": RR
+  "15": PA
+  "16": AP
+  "17": TO
+  "21": MA
+  "22": PI
+  "23": CE
+  "24": RN
+  "25": PB
+  "26": PE
+  "27": AL
+  "28": SE
+  "29": BA
+  "31": MG
+  "32": ES
+  "33": RJ
+  "35": SP
+  "41": PR
+  "42": SC
+  "43": RS
+  "50": MS
+  "51": MT
+  "52": GO
+  "53": DF
+
+tables:
+  alunos:
+    keys: [ano, id_aluno]
+    columns:
+      ano: INTEGER
+      id_municipio: STRING
+      id_escola: STRING
+      id_aluno: STRING
+      caderno: STRING
+      serie: STRING
+      rede: STRING
+      presenca: STRING
+      preenchimento_caderno: STRING
+      alfabetizado: STRING
+      proficiencia: FLOAT
+      peso_aluno: FLOAT
+    domains:
+      rede: ["1", "2", "3", "4"]
+      serie: ["2"]
+      presenca: ["0", "1"]
+      preenchimento_caderno: ["0", "1"]
+      alfabetizado: ["0", "1"]
+
+  municipio:
+    keys: [id_municipio, ano, serie, rede]
+    columns:
+      ano: INTEGER
+      id_municipio: STRING
+      serie: STRING
+      rede: STRING
+      taxa_alfabetizacao: FLOAT
+      media_portugues: FLOAT
+      proporcao_aluno_nivel_0: FLOAT
+      proporcao_aluno_nivel_1: FLOAT
+      proporcao_aluno_nivel_2: FLOAT
+      proporcao_aluno_nivel_3: FLOAT
+      proporcao_aluno_nivel_4: FLOAT
+      proporcao_aluno_nivel_5: FLOAT
+      proporcao_aluno_nivel_6: FLOAT
+      proporcao_aluno_nivel_7: FLOAT
+      proporcao_aluno_nivel_8: FLOAT
+    domains:
+      rede: ["0", "1", "2", "3", "4", "5", "6"]
+      serie: ["2"]
+
+  uf:
+    keys: [sigla_uf, ano, serie, rede]
+    columns:
+      ano: INTEGER
+      sigla_uf: STRING
+      serie: STRING
+      rede: STRING
+      taxa_alfabetizacao: FLOAT
+      media_portugues: FLOAT
+      proporcao_aluno_nivel_0: FLOAT
+      proporcao_aluno_nivel_1: FLOAT
+      proporcao_aluno_nivel_2: FLOAT
+      proporcao_aluno_nivel_3: FLOAT
+      proporcao_aluno_nivel_4: FLOAT
+      proporcao_aluno_nivel_5: FLOAT
+      proporcao_aluno_nivel_6: FLOAT
+      proporcao_aluno_nivel_7: FLOAT
+      proporcao_aluno_nivel_8: FLOAT
+    domains:
+      rede: ["0", "1", "2", "3", "4", "5", "6"]
+      serie: ["2"]
+
+  meta_alfabetizacao_brasil:
+    keys: [ano, rede]
+    has_meta_columns: true
+    columns:
+      ano: INTEGER
+      rede: STRING
+      taxa_alfabetizacao: FLOAT
+      percentual_participacao: FLOAT
+
+  meta_alfabetizacao_uf:
+    keys: [sigla_uf, ano, rede]
+    has_meta_columns: true
+    columns:
+      ano: INTEGER
+      sigla_uf: STRING
+      rede: STRING
+      taxa_alfabetizacao: FLOAT
+      percentual_participacao: FLOAT
+
+  meta_alfabetizacao_municipio:
+    keys: [id_municipio, ano, rede]
+    has_meta_columns: true
+    columns:
+      ano: INTEGER
+      id_municipio: STRING
+      rede: STRING
+      taxa_alfabetizacao: FLOAT
+      nivel_alfabetizacao: INTEGER
+      percentual_participacao: FLOAT
+
+  dicionario:
+    keys: [id_tabela, nome_coluna, chave]
+    columns:
+      id_tabela: STRING
+      nome_coluna: STRING
+      chave: STRING
+      cobertura_temporal: STRING
+      valor: STRING

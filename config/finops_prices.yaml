@@ -1,0 +1,50 @@
+# Preços de lista (USD) e cronograma usados na projeção FinOps (`radar finops`).
+# `verificado: true` = conferido na página oficial de preços durante o desenvolvimento. Itens com `verificado: false`
+# vêm de tabela de preços conhecida e DEVEM ser reconferidos antes de qualquer decisão de custo.
+
+bigquery:
+  verificado: true
+  fonte: https://cloud.google.com/bigquery/pricing
+  analise_usd_por_tib: 6.25
+  franquia_analise_tib_mes: 1
+  # 0,000031507 USD por GiB-hora ativo (x 730 h) e 0,000021918 USD por GiB-hora de longo prazo.
+  armazenamento_ativo_usd_por_gib_mes: 0.023
+  armazenamento_longo_usd_por_gib_mes: 0.016
+  franquia_armazenamento_gib: 10
+
+cloud_run_jobs:
+  verificado: true
+  fonte: https://cloud.google.com/run/pricing
+  vcpu_segundo_usd: 0.000018
+  gib_segundo_usd: 0.000002
+  franquia_vcpu_segundos: 240000
+  franquia_gib_segundos: 450000
+  vcpu_por_job: 1
+  memoria_gib_por_job: 1
+
+pubsub:
+  verificado: true
+  fonte: https://cloud.google.com/pubsub/pricing
+  usd_por_tib: 40
+  franquia_gib_mes: 10
+
+cloud_storage:
+  verificado: true
+  fonte: https://cloud.google.com/storage/pricing
+  regiao: us-central1
+  standard_usd_por_gib_mes: 0.020
+  franquia_gib_mes: 5
+
+cloud_scheduler:
+  verificado: true
+  fonte: https://cloud.google.com/scheduler/pricing
+  usd_por_job_mes: 0.10
+  jobs_gratuitos: 3
+
+# Cronograma de produção previsto (ver infra/scheduler.tf).
+cronograma:
+  batch_por_mes: 30            # 1 por dia
+  detect_por_mes: 120          # a cada 6 horas
+  consume_por_mes: 1440        # a cada 30 minutos
+  atualizacoes_fonte_por_mes: 0.5   # a fonte oficial muda cerca de 1 vez a cada 2 meses
+  jobs_agendados: 3

@@ -1,0 +1,4 @@
+# Copie para terraform.tfvars (ignorado pelo git) e ajuste.
+project_id  = "SEU-PROJETO"
+bucket_name = "SEU-PROJETO-alfabetizacao-bronze"
+alert_email = "voce@exemplo.com"

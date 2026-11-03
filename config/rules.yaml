@@ -1,0 +1,369 @@
+# Regras de qualidade executadas pelo motor (src/radar_alfabetizacao/quality/engine.py).
+# Cada SQL devolve UMA linha com a coluna `observed`. Variáveis: {{ src }}, {{ bronze }},
+# {{ silver }}, {{ gold }}, {{ contract }}, {{ versions }}, {{ source_rows }}, {{ cutoff }}.
+#
+# blocking    -> impede a camada seguinte (a execução falha, o Gold não é publicado)
+# informative -> registrada e monitorada, nunca bloqueia
+#
+# As regras da camada "contract" (schema, volume, atualidade) vivem em quality/contract_gate.py.
+
+rules:
+  # ---------------------------------------------------------------- BRONZE
+  - id: bronze.linhas_batem_com_fonte
+    layer: bronze
+    severity: blocking
+    description: Linhas da versão Bronze iguais às linhas da fonte (soma das diferenças absolutas)
+    op: "=="
+    value: 0
+    sql: |
+      SELECT SUM(ABS(c - n)) AS observed FROM (
+      {% for t in tables %}
+        SELECT (SELECT COUNT(*) FROM `{{ bronze }}.{{ t }}` WHERE _source_version = '{{ versions[t] }}') AS c,
+               {{ source_rows[t] }} AS n
+        {{ "UNION ALL" if not loop.last else "" }}
+      {% endfor %}
+      )
+
+  # ---------------------------------------------------------------- SILVER: alunos
+  - id: silver.alunos.chave_unica
+    layer: silver
+    severity: blocking
+    description: Chave (ano, id_aluno) sem duplicatas em alunos
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNT(*) - COUNT(DISTINCT TO_JSON_STRING(STRUCT(ano, id_aluno))) AS observed
+      FROM `{{ silver }}.alunos`
+
+  - id: silver.alunos.chave_nao_nula
+    layer: silver
+    severity: blocking
+    description: Colunas-chave de alunos sem nulos
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNTIF(ano IS NULL OR id_aluno IS NULL OR id_municipio IS NULL) AS observed
+      FROM `{{ silver }}.alunos`
+
+  - id: silver.alunos.codigos_no_dominio
+    layer: silver
+    severity: blocking
+    description: Códigos categóricos de alunos dentro do domínio do dicionário oficial
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNTIF(
+        rede NOT IN ({{ contract.tables['alunos'].domains['rede'] | sql_list }})
+        OR serie NOT IN ({{ contract.tables['alunos'].domains['serie'] | sql_list }})
+        OR presenca NOT IN ({{ contract.tables['alunos'].domains['presenca'] | sql_list }})
+        OR preenchimento_caderno NOT IN ({{ contract.tables['alunos'].domains['preenchimento_caderno'] | sql_list }})
+        OR alfabetizado NOT IN ({{ contract.tables['alunos'].domains['alfabetizado'] | sql_list }})
+      ) AS observed
+      FROM `{{ silver }}.alunos`
+
+  - id: silver.alunos.rede_no_dicionario
+    layer: silver
+    severity: blocking
+    description: Toda rede de alunos tem descrição no dicionário (nenhuma "desconhecido")
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNTIF(rede_nome = 'desconhecido') AS observed FROM `{{ silver }}.alunos`
+
+  - id: silver.alunos.avaliado_com_proficiencia_e_peso
+    layer: silver
+    severity: blocking
+    description: Aluno avaliado (presente com prova preenchida) sem proficiência ou peso nulos
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNTIF(avaliado AND (proficiencia IS NULL OR peso_aluno IS NULL OR peso_aluno <= 0)) AS observed
+      FROM `{{ silver }}.alunos`
+
+  - id: silver.alunos.alfabetizado_coerente_com_corte
+    layer: silver
+    severity: blocking
+    description: Campo alfabetizado coincide com proficiência >= corte Saeb entre os avaliados
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNTIF(avaliado AND ((proficiencia >= {{ cutoff }}) != (alfabetizado = '1'))) AS observed
+      FROM `{{ silver }}.alunos`
+
+  - id: silver.alunos.uf_derivada
+    layer: silver
+    severity: blocking
+    description: Todo aluno tem UF derivada do código IBGE do município
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNTIF(sigla_uf IS NULL) AS observed FROM `{{ silver }}.alunos`
+
+  - id: silver.alunos.nao_avaliado_sem_proficiencia
+    layer: silver
+    severity: informative
+    description: Aluno não avaliado com proficiência preenchida (inesperado)
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNTIF(NOT avaliado AND proficiencia IS NOT NULL) AS observed FROM `{{ silver }}.alunos`
+
+  # ---------------------------------------------------------------- SILVER: resultados oficiais
+  - id: silver.municipio.chave_unica
+    layer: silver
+    severity: blocking
+    description: Chave (id_municipio, ano, serie, rede) sem duplicatas em municipio
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNT(*) - COUNT(DISTINCT TO_JSON_STRING(STRUCT(id_municipio, ano, serie, rede))) AS observed
+      FROM `{{ silver }}.municipio`
+
+  - id: silver.municipio.ibge_e_dominios_validos
+    layer: silver
+    severity: blocking
+    description: Município com código IBGE de 7 dígitos, UF derivada e rede/série no domínio
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNTIF(
+        NOT REGEXP_CONTAINS(id_municipio, r'^[0-9]{7}$')
+        OR sigla_uf IS NULL
+        OR rede NOT IN ({{ contract.tables['municipio'].domains['rede'] | sql_list }})
+        OR serie NOT IN ({{ contract.tables['municipio'].domains['serie'] | sql_list }})
+        OR rede_nome = 'desconhecido'
+      ) AS observed
+      FROM `{{ silver }}.municipio`
+
+  - id: silver.uf.chave_e_dominios_validos
+    layer: silver
+    severity: blocking
+    description: UF com chave única, rede/série no domínio e taxa entre 0 e 100
+    op: "=="
+    value: 0
+    sql: |
+      SELECT (COUNT(*) - COUNT(DISTINCT TO_JSON_STRING(STRUCT(sigla_uf, ano, serie, rede))))
+        + COUNTIF(
+            rede NOT IN ({{ contract.tables['uf'].domains['rede'] | sql_list }})
+            OR serie NOT IN ({{ contract.tables['uf'].domains['serie'] | sql_list }})
+            OR taxa_alfabetizacao < 0 OR taxa_alfabetizacao > 100
+          ) AS observed
+      FROM `{{ silver }}.uf`
+
+  - id: silver.municipio.taxa_entre_0_e_100
+    layer: silver
+    severity: blocking
+    description: Taxa de alfabetização municipal entre 0 e 100
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNTIF(taxa_alfabetizacao < 0 OR taxa_alfabetizacao > 100) AS observed
+      FROM `{{ silver }}.municipio`
+
+  - id: silver.dicionario.chave_unica
+    layer: silver
+    severity: blocking
+    description: Chave (id_tabela, nome_coluna, chave) sem duplicatas no dicionário
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNT(*) - COUNT(DISTINCT TO_JSON_STRING(STRUCT(id_tabela, nome_coluna, chave))) AS observed
+      FROM `{{ silver }}.dicionario`
+
+  # ---------------------------------------------------------------- SILVER: metas
+  - id: silver.meta.chave_unica
+    layer: silver
+    severity: blocking
+    description: Chave (id_territorio, ano, rede_codigo) sem duplicatas nas três tabelas de meta
+    op: "=="
+    value: 0
+    sql: |
+      SELECT SUM(dups) AS observed FROM (
+        SELECT COUNT(*) - COUNT(DISTINCT TO_JSON_STRING(STRUCT(id_territorio, ano, rede_codigo))) AS dups FROM `{{ silver }}.meta_brasil`
+        UNION ALL
+        SELECT COUNT(*) - COUNT(DISTINCT TO_JSON_STRING(STRUCT(id_territorio, ano, rede_codigo))) FROM `{{ silver }}.meta_uf`
+        UNION ALL
+        SELECT COUNT(*) - COUNT(DISTINCT TO_JSON_STRING(STRUCT(id_territorio, ano, rede_codigo))) FROM `{{ silver }}.meta_municipio`
+      )
+
+  - id: silver.meta.rede_mapeada
+    layer: silver
+    severity: blocking
+    description: Todo texto de rede das metas tem código no contrato (nenhum NULL)
+    op: "=="
+    value: 0
+    sql: |
+      SELECT SUM(n) AS observed FROM (
+        SELECT COUNTIF(rede_codigo IS NULL) AS n FROM `{{ silver }}.meta_brasil`
+        UNION ALL SELECT COUNTIF(rede_codigo IS NULL) FROM `{{ silver }}.meta_uf`
+        UNION ALL SELECT COUNTIF(rede_codigo IS NULL) FROM `{{ silver }}.meta_municipio`
+      )
+
+  - id: silver.meta.valores_entre_0_e_100
+    layer: silver
+    severity: blocking
+    description: Taxas e metas entre 0 e 100 (nulo permitido, nunca zero no lugar de nulo)
+    op: "=="
+    value: 0
+    sql: |
+      SELECT SUM(n) AS observed FROM (
+      {% for t in ['meta_brasil', 'meta_uf', 'meta_municipio'] %}
+        SELECT COUNTIF(
+          taxa_alfabetizacao NOT BETWEEN 0 AND 100
+          OR meta_ano NOT BETWEEN 0 AND 100
+          OR meta_final NOT BETWEEN 0 AND 100
+        ) AS n FROM `{{ silver }}.{{ t }}`
+        {{ "UNION ALL" if not loop.last else "" }}
+      {% endfor %}
+      )
+
+  # ---------------------------------------------------------------- SILVER: junções
+  # Limiar de 0,90: abaixo disso indica mudança de formato de chave (ex.: id_municipio) ou perda
+  # de cobertura. Hoje a meta municipal cobre ~98% dos municípios com resultado.
+  - id: silver.join.meta_municipio_com_resultado
+    layer: silver
+    severity: blocking
+    description: Parcela das metas municipais que encontra resultado em municipio (mesmo id, ano, rede)
+    op: ">="
+    value: 0.90
+    sql: |
+      SELECT SAFE_DIVIDE(COUNTIF(r.id_municipio IS NOT NULL), COUNT(*)) AS observed
+      FROM `{{ silver }}.meta_municipio` m
+      LEFT JOIN `{{ silver }}.municipio` r
+        ON r.id_municipio = m.id_territorio AND r.ano = m.ano AND r.rede = m.rede_codigo
+
+  - id: silver.join.resultado_municipal_com_meta
+    layer: silver
+    severity: blocking
+    description: Parcela dos resultados da rede municipal (rede 3, a partir da janela de metas) com meta
+    op: ">="
+    value: 0.90
+    sql: |
+      SELECT SAFE_DIVIDE(COUNTIF(m.id_territorio IS NOT NULL), COUNT(*)) AS observed
+      FROM `{{ silver }}.municipio` r
+      LEFT JOIN `{{ silver }}.meta_municipio` m
+        ON m.id_territorio = r.id_municipio AND m.ano = r.ano AND m.rede_codigo = r.rede
+      WHERE r.rede = '3' AND r.ano >= {{ meta_window[0] }}
+
+  - id: silver.join.resultado_municipal_com_microdados
+    layer: silver
+    severity: informative
+    description: Parcela dos resultados municipais (rede 3) com microdados de alunos no mesmo ano
+    op: ">="
+    value: 0.80
+    sql: |
+      SELECT SAFE_DIVIDE(COUNTIF(a.id_municipio IS NOT NULL), COUNT(*)) AS observed
+      FROM `{{ silver }}.municipio` r
+      LEFT JOIN (
+        SELECT DISTINCT id_municipio, ano, rede FROM `{{ silver }}.alunos` WHERE avaliado
+      ) a ON a.id_municipio = r.id_municipio AND a.ano = r.ano AND a.rede = r.rede
+      WHERE r.rede = '3'
+
+  # ---------------------------------------------------------------- GOLD
+  - id: gold.termometro.chave_unica
+    layer: gold
+    severity: blocking
+    description: Chave (nivel, id_territorio, ano, rede_codigo) sem duplicatas no Termômetro
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNT(*) - COUNT(DISTINCT TO_JSON_STRING(STRUCT(nivel, id_territorio, ano, rede_codigo))) AS observed
+      FROM `{{ gold }}.termometro`
+
+  - id: gold.termometro.status_valido
+    layer: gold
+    severity: blocking
+    description: Todo status de meta está entre os cinco estados definidos
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNTIF(
+        status_meta_ano IS NULL OR status_meta_final IS NULL
+        OR status_meta_ano NOT IN ('linha_de_base', 'sem_resultado', 'sem_meta', 'atingiu', 'nao_atingiu')
+      ) AS observed
+      FROM `{{ gold }}.termometro`
+
+  - id: gold.termometro.nulo_nao_vira_zero
+    layer: gold
+    severity: blocking
+    description: Resultado nulo só pode ter status sem_resultado ou linha_de_base
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNTIF(taxa_alfabetizacao IS NULL AND status_meta_ano NOT IN ('sem_resultado', 'linha_de_base')) AS observed
+      FROM `{{ gold }}.termometro`
+
+  - id: gold.indicador_municipal.chave_unica
+    layer: gold
+    severity: blocking
+    description: Chave (id_municipio, ano, rede_codigo) sem duplicatas no indicador municipal
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNT(*) - COUNT(DISTINCT TO_JSON_STRING(STRUCT(id_municipio, ano, rede_codigo))) AS observed
+      FROM `{{ gold }}.indicador_municipal`
+
+  - id: gold.ml.sem_vazamento_temporal
+    layer: gold
+    severity: blocking
+    description: Atributos sempre de ano anterior ao do rótulo (sem vazamento do alvo)
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNTIF(l.ano_referencia != l.ano_alvo - 1 OR f.ano_referencia >= l.ano_alvo) AS observed
+      FROM `{{ gold }}.ml_labels` l
+      JOIN `{{ gold }}.ml_features` f
+        ON f.id_municipio = l.id_municipio AND f.rede_codigo = l.rede_codigo AND f.ano_referencia = l.ano_referencia
+
+  - id: gold.reconciliacao.diferenca_nacional_pp
+    layer: gold
+    severity: informative
+    description: Diferença (pp) entre a taxa nacional recalculada dos microdados e a oficial, no último ano com microdados
+    op: "<="
+    value: 0.5
+    sql: |
+      SELECT ABS(diferenca_pp) AS observed
+      FROM `{{ gold }}.reconciliacao`
+      WHERE nivel = 'brasil' AND rede_codigo = '5' AND diferenca_pp IS NOT NULL
+      ORDER BY ano DESC LIMIT 1
+
+  - id: gold.reconciliacao.municipal_dentro_de_1pp
+    layer: gold
+    severity: informative
+    description: Parcela dos municípios cuja taxa recalculada difere da oficial em até 1 pp
+    op: ">="
+    value: 0.95
+    sql: |
+      SELECT SAFE_DIVIDE(COUNTIF(ABS(diferenca_pp) <= 1), COUNT(*)) AS observed
+      FROM `{{ gold }}.reconciliacao`
+      WHERE nivel = 'municipio' AND diferenca_pp IS NOT NULL
+
+  - id: gold.indicador_municipal.selo_baixo_raro
+    layer: gold
+    severity: informative
+    description: Parcela de municípios com selo de confiança baixo
+    op: "<="
+    value: 0.10
+    sql: |
+      SELECT SAFE_DIVIDE(COUNTIF(selo_confianca = 'baixa'), COUNT(*)) AS observed
+      FROM `{{ gold }}.indicador_municipal`
+
+  - id: gold.termometro.sem_meta_rara
+    layer: gold
+    severity: informative
+    description: Parcela de linhas, a partir da janela de metas, sem meta definida
+    op: "<="
+    value: 0.10
+    sql: |
+      SELECT SAFE_DIVIDE(COUNTIF(status_meta_ano = 'sem_meta'), COUNT(*)) AS observed
+      FROM `{{ gold }}.termometro`
+      WHERE ano >= {{ meta_window[0] }}
+
+  - id: gold.termometro.sem_dados_simulados
+    layer: gold
+    severity: informative
+    description: Linhas do Termômetro com origem simulada (devem ser zero em produção)
+    op: "=="
+    value: 0
+    sql: |
+      SELECT COUNTIF(origem_dado != 'oficial') AS observed FROM `{{ gold }}.termometro`

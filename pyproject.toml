@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "radar-alfabetizacao"
+version = "0.1.0"
+description = "Pipeline híbrido (batch + streaming) em arquitetura Medalhão para o Indicador Criança Alfabetizada"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "google-cloud-bigquery>=3.25,<4",
+  "google-cloud-pubsub>=2.23,<3",
+  "google-cloud-storage>=2.18,<4",
+  "pydantic>=2.7,<3",
+  "pydantic-settings>=2.3,<3",
+  "PyYAML>=6,<7",
+  "Jinja2>=3.1,<4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-cov>=5",
+  "ruff>=0.6",
+  "mypy>=1.10",
+  "types-PyYAML",
+  "sqlglot>=25",
+  "duckdb>=1.0",
+  "python-hcl2>=4",
+]
+
+[project.scripts]
+radar = "radar_alfabetizacao.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "C4", "RUF", "PT"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501", "PT018"]  # asserts compostos e linhas longas de dados são legíveis nos testes
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+plugins = ["pydantic.mypy"]
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["google.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = ["integration: exige credenciais e recursos reais na nuvem"]
