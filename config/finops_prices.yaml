@@ -41,7 +41,7 @@ cloud_scheduler:
   usd_por_job_mes: 0.10
   jobs_gratuitos: 3
 
-# Cronograma de produção previsto (ver infra/scheduler.tf).
+# Cronograma de produção previsto (ver infra/jobs.tf).
 cronograma:
   batch_por_mes: 30            # 1 por dia
   detect_por_mes: 120          # a cada 6 horas
