@@ -26,7 +26,7 @@ aspiracional de 100% não é misturado ao indicador oficial.
 | Código-fonte dos pipelines | [`src/`](src) (núcleo, adaptadores e CLI) e [`sql/`](sql) (todo o SQL das camadas) |
 | Camadas Bronze, Silver e Gold | [`sql/bronze`](sql/bronze), [`sql/silver`](sql/silver), [`sql/gold`](sql/gold) |
 | Scripts de validação e qualidade | [`config/rules.yaml`](config/rules.yaml), [`config/sources.yaml`](config/sources.yaml), [`src/radar_alfabetizacao/quality/`](src/radar_alfabetizacao/quality) |
-| Documentação técnica | [`docs/arquitetura.md`](docs/arquitetura.md), [`docs/adr/`](docs/adr), [`docs/anomalias.md`](docs/anomalias.md), [`docs/fase1/medicao-fonte.md`](docs/fase1/medicao-fonte.md), [`docs/ia-fase3.md`](docs/ia-fase3.md) |
+| Documentação técnica | [`docs/arquitetura.md`](docs/arquitetura.md), [`docs/adr/`](docs/adr), [`docs/anomalias.md`](docs/anomalias.md), [`docs/fase1/medicao-fonte.md`](docs/fase1/medicao-fonte.md) |
 | **Prints das telas do console (BigQuery, Cloud Run, Pub/Sub, Logging, Monitoring, Storage, e-mail do alerta)** | **[`docs/execucao-cloud/`](docs/execucao-cloud)**: abra [`docs/execucao-cloud/README.md`](docs/execucao-cloud/README.md), que exibe cada print agrupado por serviço; os arquivos `.png` estão na mesma pasta |
 | Evidências geradas das execuções (IDs de job, linhas, bytes faturados, qualidade, streaming) | [`docs/execucao-cloud/evidencias.md`](docs/execucao-cloud/evidencias.md) |
 | Tabela de estimativa de custo | seção [FinOps](#finops) e [`docs/finops.md`](docs/finops.md) |
@@ -40,7 +40,6 @@ aspiracional de 100% não é misturado ao indicador oficial.
 | Termômetro: resultado × meta de cada município, UF e Brasil, com cinco estados explícitos | `gold.termometro` |
 | Validação cruzada: taxa recalculada dos microdados × taxa oficial | `gold.reconciliacao` |
 | Anomalias e selo de confiança por município | `gold.indicador_municipal` |
-| Base da Fase 3, com atributos e rótulos **separados** (sem vazamento do alvo) | `gold.ml_features`, `gold.ml_labels` |
 | Evidência de cada execução (jobs, linhas, bytes, qualidade) | dataset `alfabetizacao_ops` |
 
 Todo dado vem da fonte oficial, **lido em tempo de execução**: o ano mais recente é descoberto na
@@ -91,7 +90,6 @@ tem um registro em [`docs/adr/`](docs/adr).
 | Backend remoto do Terraform | Estado compartilhado | Hoje o estado é local (entrega única) | **Evolução futura** |
 | Orquestrador (Composer/Airflow) ou Dataflow | Dependências entre etapas; streaming em maior escala | Desnecessários para este volume (ver ADR 0008) | **Evolução futura**, se o volume crescer |
 | Painel (por exemplo Looker Studio) sobre a Gold | Consumo pelos gestores | A Gold já está pronta para isso | **Evolução futura** |
-| Treino do modelo preditivo | Fase 3 | A base de atributos e rótulos já está entregue | **Próxima fase** |
 
 ## Decisões principais
 
@@ -105,7 +103,6 @@ tem um registro em [`docs/adr/`](docs/adr).
 | Núcleo puro + portas/adaptadores | Testável sem nuvem | [0006](docs/adr/0006-portas-e-adaptadores.md) |
 | FinOps calculado de **medições** reais | Custo projetado sem chute | [0007](docs/adr/0007-finops-medido.md) |
 | Cloud Run Jobs + Scheduler, sem Composer/Dataflow | Custo próximo de zero para este volume | [0008](docs/adr/0008-cloud-run-jobs.md) |
-| Features e rótulos da Fase 3 em tabelas separadas | Evita vazamento do alvo | [0009](docs/adr/0009-features-e-rotulos.md) |
 
 ### Trade-offs
 
@@ -172,7 +169,7 @@ publicados de uma vez), a latência cresce de lote em lote porque a fila acumula
 |---|---|---|
 | **Bronze** (`alfabetizacao_bronze`) | Cópia fiel de cada tabela da fonte + `_run_id`, `_source_version`, `_ingested_at`; absorve colunas novas da fonte | contagem de linhas igual à fonte |
 | **Silver** (`alfabetizacao_silver`) | Tipos corretos, chaves únicas, domínios válidos, UF derivada do código IBGE, `avaliado`, redes descritas pelo dicionário, metas por ano em colunas padronizadas | unicidade, nulos, domínio, coerência com o corte 743, *join rates* |
-| **Gold** (`alfabetizacao_gold`) | Termômetro, reconciliação, indicador municipal, `ml_features`, `ml_labels` | status válido, nulo nunca vira zero, sem vazamento temporal |
+| **Gold** (`alfabetizacao_gold`) | Termômetro, reconciliação e indicador municipal | status válido, nulo nunca vira zero |
 
 **Política de escrita da Bronze:** *append-only* por versão da fonte. Uma execução nunca apaga nem sobrescreve a
 anterior; versão já existente não é regravada (ADR [0002](docs/adr/0002-bronze-versionada.md)).
@@ -235,7 +232,7 @@ Gerada por `make finops`, que atualiza o bloco abaixo e `docs/finops.md`.
 | **Total** | | | | **US$ 0.0000** |
 
 Sem nenhuma franquia gratuita (pior caso), a projeção seria **US$ 1.0755/mês**.
-Nos últimos 30 dias, o pipeline faturou 10399.8 MB de análise no BigQuery (todos os jobs rotulados `app=radar-alfabetizacao`).
+Nos últimos 30 dias, o pipeline faturou 10420.7 MB de análise no BigQuery (todos os jobs rotulados `app=radar-alfabetizacao`).
 <!-- FINOPS:END -->
 
 A tabela segue o formato pedido (serviço, unidade, quantidade medida, preço unitário, custo mensal projetado). O
@@ -307,19 +304,11 @@ e a regra informativa `gold.termometro.sem_dados_simulados` registra a conferên
 A Gold foi desenhada para ser a base de modelos e de análises de política pública:
 
 * **Predição de alfabetização.** Dado o que se sabe de cada município e rede no ano *t* (taxa, meta, distância até a
-  meta, níveis de proficiência), prever se o município atingirá a meta no ano *t+1* (Fase 3).
+  meta, níveis de proficiência), prever se o município atingirá a meta no ano *t+1*.
 * **Desigualdade educacional.** O termômetro compara município, UF e Brasil na mesma rede e ano, e o selo de confiança
   mostra onde o número é frágil, para priorizar quem está mais distante da meta.
 * **Políticas baseadas em evidência.** A validação cruzada e as anomalias documentadas deixam claro quanto cada
   número pode sustentar uma decisão.
-
-### Fase 3 (modelo preditivo): atenção a vazamento
-
-* `ml_features` tem somente informação conhecida no ano de referência *t* (inclui a meta do ano seguinte, pactuada antes).
-* `ml_labels` tem o alvo do ano *t+1* (`atingiu_meta_alvo`) e o `split_sugerido` **temporal**.
-* A regra bloqueante `gold.ml.sem_vazamento_temporal` garante que todo par atributo/rótulo respeite `ano_referencia = ano_alvo − 1`.
-* Hoje existe **uma** transição observável (2023 → 2024); com poucos anos, a Fase 3 deve declarar essa limitação.
-  Detalhes em [`docs/ia-fase3.md`](docs/ia-fase3.md).
 
 ## Testes e qualidade de código
 
@@ -350,7 +339,7 @@ ponderada têm teste de paridade SQL × Python em DuckDB. A CI (`.github/workflo
 **Lacunas da fonte**
 
 * As tabelas de resultado e os microdados terminam em 2024; as metas chegam a 2025. Existe **uma** transição observável
-  (2023 → 2024), o que limita qualquer modelo da Fase 3. Projeção até 2030 seria cenário, não previsão.
+  (2023 → 2024), o que limita análises de série temporal. Projeção até 2030 seria cenário, não previsão.
 * Nos microdados de 2023 não aparecem SP, AC e DF. O recálculo nacional de 2023 dá 57,46 contra 55,9 oficial, e a
   hipótese principal é essa ausência. O pipeline mede e registra a diferença, sem corrigi-la
   ([`docs/anomalias.md`](docs/anomalias.md)).
@@ -366,5 +355,5 @@ sql/      todo o SQL (Jinja): ddl, bronze, silver, gold, stream, ops
 src/      núcleo (domain, quality, pipeline, ops), portas e adaptadores, CLI
 infra/    Terraform: datasets, bucket, Pub/Sub + DLQ, Cloud Run Jobs, Scheduler, alertas
 tests/    unitários, SQL, paridade DuckDB, Terraform
-docs/     arquitetura, ADRs, anomalias, medição da fonte (fase1/), Fase 3, evidências e prints (execucao-cloud/)
+docs/     arquitetura, ADRs, anomalias, medição da fonte (fase1/), evidências e prints (execucao-cloud/)
 ```

@@ -11,7 +11,7 @@
 | **Total** | | | | **US$ 0.0000** |
 
 Sem nenhuma franquia gratuita (pior caso), a projeção seria **US$ 1.0755/mês**.
-Nos últimos 30 dias, o pipeline faturou 10399.8 MB de análise no BigQuery (todos os jobs rotulados `app=radar-alfabetizacao`).
+Nos últimos 30 dias, o pipeline faturou 10420.7 MB de análise no BigQuery (todos os jobs rotulados `app=radar-alfabetizacao`).
 
 ## Premissas
 
